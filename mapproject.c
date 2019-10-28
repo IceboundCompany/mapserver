@@ -2519,7 +2519,7 @@ void msProjDataInitFromEnv()
   const char *val;
 
   if( (val=CPLGetConfigOption( "PROJ_DATA", NULL )) != NULL ||
-      (val=CPLGetConfigOption( "PROJ_LIB", NULL )) != NULL ) {
+      (val=CPLGetConfigOption( "MS_PROJ_LIB", NULL )) != NULL ) {
     msSetPROJ_DATA(val, NULL);
   }
 }
