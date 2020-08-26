@@ -228,8 +228,8 @@
   }
 
   %newobject drawLegend;
-  imageObj *drawLegend() {
-    return msDrawLegend(self, MS_FALSE, NULL);
+  imageObj *drawLegend(int scale_independent=MS_FALSE) {
+    return msDrawLegend(self, scale_independent, NULL);
   }
 
   %newobject drawScalebar;
