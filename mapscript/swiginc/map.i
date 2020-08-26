@@ -238,10 +238,11 @@
     return msDrawMap(self, MS_TRUE);
   }
 
-  %newobject drawLegend;
-  imageObj *drawLegend() {
-    return msDrawLegend(self, MS_FALSE, NULL);
-  }
+    %newobject drawLegend;
+    /// Draw map legend, returning an :class:`imageObj`.
+    imageObj *drawLegend(int scale_independent=MS_FALSE) {
+      return msDrawLegend(self, scale_independent, NULL);
+    }
 
   %newobject drawScalebar;
   imageObj *drawScalebar() {
