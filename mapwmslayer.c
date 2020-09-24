@@ -1359,7 +1359,6 @@ int msDrawWMSLayerLow(int nLayerId, httpRequestObj *pasReqInfo,
    * to attach a "VSI" name to this buffer.
    * ------------------------------------------------------------------ */
   if( pasReqInfo[iReq].pszOutputFile == NULL ) {
-    msCleanVSIDir( "/vsimem/msout" );
     mem_filename = msTmpFile(map, NULL, "/vsimem/msout/", "img.tmp" );
 
     VSIFCloseL(
@@ -1441,7 +1440,7 @@ int msDrawWMSLayerLow(int nLayerId, httpRequestObj *pasReqInfo,
       if (msDrawLayer(map, lp, img) != 0)
         status = MS_FAILURE;
 
-      if (!lp->debug)
+      if (!lp->debug || mem_filename != NULL)
         VSIUnlink( wldfile );
     } else {
       msSetError(MS_WMSCONNERR,
@@ -1453,7 +1452,7 @@ int msDrawWMSLayerLow(int nLayerId, httpRequestObj *pasReqInfo,
   }
 
   /* We're done with the remote server's response... delete it. */
-  if (!lp->debug)
+  if (!lp->debug || mem_filename != NULL)
     VSIUnlink(lp->data);
 
   /* restore prveious type */
