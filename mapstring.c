@@ -1877,7 +1877,7 @@ wchar_t* msConvertWideStringFromUTF8 (const char* string, const char* encoding)
       nInSize = sizeof (char)*nStr;
       pszUTF8 = string;
       pwszWide = output;
-      iconv_status = msIconv(cd, (char **)&pszUTF8, &nInSize, (char **)&pwszWide, &nOutSize);
+      iconv_status = iconv(cd, (char **)&pszUTF8, &nInSize, (char **)&pwszWide, &nOutSize);
       if ((size_t)-1 == iconv_status) {
         switch (errno) {
           case E2BIG:
