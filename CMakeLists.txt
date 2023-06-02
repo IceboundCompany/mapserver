@@ -11,12 +11,13 @@ endif("${PROJECT_SOURCE_DIR}" STREQUAL "${PROJECT_BINARY_DIR}")
 
 include(CheckLibraryExists)
 include(CheckFunctionExists)
+include(CheckSymbolExists)
 include(CheckIncludeFile)
 include(CheckCSourceCompiles)
 
 set (MapServer_VERSION_MAJOR 8)
 set (MapServer_VERSION_MINOR 0)
-set (MapServer_VERSION_REVISION 0)
+set (MapServer_VERSION_REVISION 1)
 set (MapServer_VERSION_SUFFIX "")
 
 # Set C++ version
@@ -119,7 +120,12 @@ check_function_exists("strlcat"  HAVE_STRLCAT)
 check_function_exists("strlcpy"  HAVE_STRLCPY)
 check_function_exists("strlen"  HAVE_STRLEN)
 check_function_exists("strncasecmp"  HAVE_STRNCASECMP)
-check_function_exists("vsnprintf"  HAVE_VSNPRINTF)
+
+check_symbol_exists(vsnprintf stdio.h HAVE_VSNPRINTF)
+IF(NOT HAVE_VSNPRINTF)
+    check_function_exists("vsnprintf"  HAVE_VSNPRINTF)
+ENDIF()
+
 check_function_exists("lrintf" HAVE_LRINTF)
 check_function_exists("lrint" HAVE_LRINT)
 
@@ -282,8 +288,14 @@ if(WIN32)
   set(REGEX_MALLOC 1)
   set(USE_GENERIC_MS_NINT 1)
   set(HAVE_STRING_H 0)
-  # Suppress warnings for regex.c
-  set_source_files_properties(${REGEX_SOURCES} PROPERTIES COMPILE_FLAGS /w)
+  if(MSVC)
+    # Suppress warnings for regex.c
+    set_source_files_properties(${REGEX_SOURCES} PROPERTIES COMPILE_FLAGS /w)
+  endif(MSVC)
+  if(MINGW)
+    # mingw provides stdlib.h
+    add_definitions(-DSTDC_HEADERS=1)
+  endif(MINGW)
 else(WIN32)
   set(REGEX_SOURCES "")
 endif(WIN32)
@@ -933,7 +945,6 @@ status_optional_component("GIF" "${USE_GIF}" "${GIF_LIBRARY}")
 status_optional_component("MYSQL" "${USE_MYSQL}" "${MYSQL_LIBRARY}")
 status_optional_component("FRIBIDI" "${USE_FRIBIDI}" "${FRIBIDI_LIBRARY}")
 status_optional_component("HARFBUZZ" "${USE_HARFBUZZ}" "${HARFBUZZ_LIBRARY}")
-status_optional_component("GIF" "${USE_GIF}" "${GIF_LIBRARY}")
 status_optional_component("CAIRO" "${USE_CAIRO}" "${CAIRO_LIBRARY}")
 status_optional_component("SVGCAIRO" "${USE_SVG_CAIRO}" "${SVGCAIRO_LIBRARY}")
 status_optional_component("RSVG" "${USE_RSVG}" "${RSVG_LIBRARY}")
@@ -1101,5 +1112,5 @@ install(
 
 install(
   FILES ${PROJECT_SOURCE_DIR}/etc/mapserver-sample.conf
-  DESTINATION ${CMAKE_INSTALL_FULL_SYSCONFDIR}/
+  DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/
 )

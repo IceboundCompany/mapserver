@@ -96,7 +96,13 @@
     classObj *cloneClass() 
 #else
     %newobject clone;
-    /// Return an independent copy of the class without a parent layer
+    /**
+    Return an independent copy of the class without a parent layer
+
+    .. note::
+
+        In the Java & PHP modules this method is named ``cloneClass``.    
+    */ 
     classObj *clone() 
 #endif
     {
@@ -169,8 +175,17 @@
     }
     else
       layer->scalefactor = map->resolution/map->defresolution;
-    
+
+  #if defined(WIN32) && defined(SWIGCSHARP)
+    __try {
+        return msDrawLegendIcon(map, layer, self, width, height, dstImage, dstX, dstY, MS_TRUE, NULL);
+    }    
+    __except(1 /*EXCEPTION_EXECUTE_HANDLER, catch every exception so it doesn't crash IIS*/) {  
+        msSetError(MS_IMGERR, "Unhandled exception in drawing legend image 0x%08x", "msDrawMap()", GetExceptionCode());
+    }
+  #else    
     return msDrawLegendIcon(map, layer, self, width, height, dstImage, dstX, dstY, MS_TRUE, NULL);
+  #endif
   }
 
   %newobject createLegendIcon;
