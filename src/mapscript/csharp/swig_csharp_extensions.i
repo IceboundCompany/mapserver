@@ -240,6 +240,8 @@
 #if SWIG_VERSION < 0x040000
 %typemap(csdestruct, methodname="Dispose", methodmodifiers="public") SWIGTYPE {
   lock(this) {
+    try
+	{
       if(swigCPtr.Handle != System.IntPtr.Zero && swigCMemOwn) {
         swigCMemOwn = false;
         $imcall;
@@ -247,12 +249,23 @@
       swigCPtr = new System.Runtime.InteropServices.HandleRef(null, System.IntPtr.Zero);
       swigParentRef = null;
       System.GC.SuppressFinalize(this);
+	}
+    catch (System.Exception e)
+    {
+      System.EventHandler<System.IO.ErrorEventArgs> handler = OSGeo.MapServer.mapscript.ExceptionInDispose;
+      if (handler != null)
+      {
+        handler(this, new System.IO.ErrorEventArgs(e));
+      }
     }
   }
+}
 #endif
 
 %typemap(csdestruct_derived, methodname="Dispose", methodmodifiers="public") TYPE {
   lock(this) {
+    try
+	{
       if(swigCPtr.Handle != System.IntPtr.Zero && swigCMemOwn) {
         swigCMemOwn = false;
         $imcall;
@@ -261,13 +274,24 @@
       swigParentRef = null;
       System.GC.SuppressFinalize(this);
       base.Dispose();
+	}
+    catch (System.Exception e)
+    {
+      System.EventHandler<System.IO.ErrorEventArgs> handler = OSGeo.MapServer.mapscript.ExceptionInDispose;
+      if (handler != null)
+      {
+        handler(this, new System.IO.ErrorEventArgs(e));
+      }
     }
   }
+}
 
 %typemap(csin) SWIGTYPE *DISOWN "$csclassname.getCPtrAndDisown($csinput, ThisOwn_false())"
 %typemap(csin) SWIGTYPE *SETREFERENCE "$csclassname.getCPtrAndSetReference($csinput, ThisOwn_false())"
 
 %pragma(csharp) modulecode=%{
+  public static System.EventHandler<System.IO.ErrorEventArgs> ExceptionInDispose { get; set; }
+  
   /* %pragma(csharp) modulecode */
   internal class $moduleObject : global::System.IDisposable {
 	public virtual void Dispose() {
