@@ -9,3 +9,4 @@ tests/map.png
 .vagrant
 .idea
 /.vs
+/vc17x64
