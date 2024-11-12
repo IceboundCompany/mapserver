@@ -762,7 +762,7 @@ int msProcessProjection(projectionObj *p) {
       // PROJ doesn't like extraneous parameters that it doesn't recognize
       // when initializing a CRS from a +init=epsg:xxxx string
       // Cf https://github.com/OSGeo/PROJ/issues/4203
-      if (strncmp(p->args[i], "epsgaxis=", strlen("epsgaxis=")) != 0) {
+      if (strstr(p->args[i], "epsgaxis=") == NULL) {
         args[numargs] = p->args[i];
         ++numargs;
       }
@@ -2495,6 +2495,7 @@ projectionContext *msProjectionContextGetFromPool() {
   if (headOfLinkedListOfProjContext) {
     LinkedListOfProjContext *next = headOfLinkedListOfProjContext->next;
     context = headOfLinkedListOfProjContext->context;
+    context->thread_id = msGetThreadId();
     msFree(headOfLinkedListOfProjContext);
     headOfLinkedListOfProjContext = next;
   } else {
