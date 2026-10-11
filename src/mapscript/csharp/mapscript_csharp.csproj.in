@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>@CSHARP_TARGET_FRAMEWORK@</TargetFramework>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <AssemblyName>mapscript_csharp</AssemblyName>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <!-- The assembly attributes come from config/AssemblyInfo.cs, which uses a wildcard AssemblyVersion -->
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>true</GenerateTargetFrameworkAttribute>
+    <Deterministic>false</Deterministic>
+    <SignAssembly>true</SignAssembly>
+    <AssemblyOriginatorKeyFile>@CMAKE_CURRENT_SOURCE_DIR@/mapscript.snk</AssemblyOriginatorKeyFile>
+    <!-- AssemblyInfo.cs also names the key file -->
+    <NoWarn>$(NoWarn);CS1616;CS1699</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="@CMAKE_CURRENT_BINARY_DIR@/*.cs" />
+    <Compile Include="@CMAKE_CURRENT_SOURCE_DIR@/config/AssemblyInfo.cs" />
+  </ItemGroup>
+</Project>
