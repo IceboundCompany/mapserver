@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>@EXAMPLE_TARGET_FRAMEWORK@</TargetFramework>
+    <UseWindowsForms>@EXAMPLE_USE_WINDOWS_FORMS@</UseWindowsForms>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <AssemblyName>@EXAMPLE_NAME@</AssemblyName>
+    <EnableDefaultItems>false</EnableDefaultItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="@CMAKE_CURRENT_SOURCE_DIR@/examples/@EXAMPLE_NAME@.cs" />
+    <Reference Include="mapscript_csharp">
+      <HintPath>@DOTNET_PROJECTS_DIR@/mapscript_csharp/out/mapscript_csharp.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>
