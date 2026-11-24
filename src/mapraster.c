@@ -637,6 +637,14 @@ void *msDrawRasterLayerLowOpenDataset(mapObj *map, layerObj *layer,
   if (*p_decrypted_path == NULL)
     return NULL;
 
+  /*
+  ** TLOCK_GDAL is held only while GDAL opens the dataset, and again while it is
+  ** closed (msDrawRasterLayerLowCloseDataset()), no longer from the open to the
+  ** close: GDAL shares a dataset opened with GDAL_OF_SHARED only within the
+  ** thread that opened it, so no other thread reads it, and holding the lock
+  ** while the image was read and resampled made the threads of a process draw
+  ** raster layers, a tile index above all, one at a time.
+  */
   msAcquireLock(TLOCK_GDAL);
   if (!layer->tileindex) {
     char **connectionoptions =
@@ -678,9 +686,12 @@ void *msDrawRasterLayerLowOpenDataset(mapObj *map, layerObj *layer,
       }
     }
     CSLDestroy(papszAllowedDrivers);
+    msReleaseLock(TLOCK_GDAL);
     return hDS;
   } else {
-    return GDALOpenShared(*p_decrypted_path, GA_ReadOnly);
+    GDALDatasetH hDS = GDALOpenShared(*p_decrypted_path, GA_ReadOnly);
+    msReleaseLock(TLOCK_GDAL);
+    return hDS;
   }
 }
 
@@ -691,6 +702,7 @@ void *msDrawRasterLayerLowOpenDataset(mapObj *map, layerObj *layer,
 void msDrawRasterLayerLowCloseDataset(layerObj *layer, void *hDS) {
   if (hDS) {
     const char *close_connection;
+    msAcquireLock(TLOCK_GDAL);
     close_connection = msLayerGetProcessingKey(layer, "CLOSE_CONNECTION");
 
     if (close_connection == NULL && layer->tileindex == NULL)
@@ -712,6 +724,28 @@ void msDrawRasterLayerLowCloseDataset(layerObj *layer, void *hDS) {
     } else {
       GDALClose((GDALDatasetH)hDS);
     }
+    msReleaseLock(TLOCK_GDAL);
+  }
+}
+
+/************************************************************************/
+/*                msDrawRasterLayerLowCloseOnError()                    */
+/*                                                                      */
+/*      Closes a dataset after a failed draw. The interpolation         */
+/*      datasets of kernel density and IDW layers are created and       */
+/*      drawn under TLOCK_GDAL, which is held still; other datasets     */
+/*      were opened by msDrawRasterLayerLowOpenDataset(), which         */
+/*      released it.                                                    */
+/************************************************************************/
+
+static void msDrawRasterLayerLowCloseOnError(layerObj *layer, GDALDatasetH hDS) {
+  if (layer->connectiontype == MS_KERNELDENSITY ||
+      layer->connectiontype == MS_IDW) {
+    GDALClose(hDS);
+    msReleaseLock(TLOCK_GDAL);
+  } else {
+    msAcquireLock(TLOCK_GDAL);
+    GDALClose(hDS);
     msReleaseLock(TLOCK_GDAL);
   }
 }
@@ -906,11 +940,9 @@ int msDrawRasterLayerLowWithDataset(mapObj *map, layerObj *layer,
       decrypted_path = NULL;
 
       if (eRet == CDRT_CONTINUE_NEXT_TILE) {
-        msReleaseLock(TLOCK_GDAL);
         continue;
       }
       if (eRet == CDRT_RETURN_MS_FAILURE) {
-        msReleaseLock(TLOCK_GDAL);
         return MS_FAILURE;
       }
     }
@@ -918,8 +950,7 @@ int msDrawRasterLayerLowWithDataset(mapObj *map, layerObj *layer,
     if (msDrawRasterLoadProjection(layer, hDS, filename, tilesrsindex,
                                    tilesrsname) != MS_SUCCESS) {
       if (hDatasetIn == NULL) {
-        GDALClose(hDS);
-        msReleaseLock(TLOCK_GDAL);
+        msDrawRasterLayerLowCloseOnError(layer, hDS);
       }
       final_status = MS_FAILURE;
       break;
@@ -952,8 +983,7 @@ int msDrawRasterLayerLowWithDataset(mapObj *map, layerObj *layer,
 
     if (status == -1) {
       if (hDatasetIn == NULL) {
-        GDALClose(hDS);
-        msReleaseLock(TLOCK_GDAL);
+        msDrawRasterLayerLowCloseOnError(layer, hDS);
       }
       final_status = MS_FAILURE;
       break;

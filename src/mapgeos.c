@@ -73,12 +73,43 @@ typedef struct geos_thread_info {
 
 static geos_thread_info_t *geos_list = NULL;
 
+/*
+** Each thread keeps its handle in thread-local storage, so that the handle is
+** found without TLOCK_GEOS: it is asked for at least once per shape drawn
+** (msFreeShape, msClipPolylineRect), and the lock made the threads of a
+** process draw such layers one at a time. The list still owns the handles, for
+** msGEOSCleanup(), which bumps the generation so that no thread uses a handle
+** it has finished.
+*/
+#if defined(_MSC_VER)
+#define MS_GEOS_THREAD_LOCAL __declspec(thread)
+#else
+#define MS_GEOS_THREAD_LOCAL __thread
+#endif
+static volatile int geos_generation = 1;
+static MS_GEOS_THREAD_LOCAL GEOSContextHandle_t geos_thread_handle = NULL;
+static MS_GEOS_THREAD_LOCAL int geos_thread_generation = 0;
+
+static GEOSContextHandle_t msGetGeosContextHandleFromList(int *generation);
+
 static GEOSContextHandle_t msGetGeosContextHandle() {
+  if (geos_thread_handle == NULL ||
+      geos_thread_generation != geos_generation) {
+    int generation = 0;
+    geos_thread_handle = msGetGeosContextHandleFromList(&generation);
+    geos_thread_generation = generation;
+  }
+  return geos_thread_handle;
+}
+
+static GEOSContextHandle_t msGetGeosContextHandleFromList(int *generation) {
   geos_thread_info_t *link;
   GEOSContextHandle_t ret_obj;
   void *thread_id;
 
   msAcquireLock(TLOCK_GEOS);
+
+  *generation = geos_generation;
 
   thread_id = msGetThreadId();
 
@@ -145,6 +176,7 @@ void msGEOSCleanup() {
     free(cur);
   }
   geos_list = NULL;
+  geos_generation++;
   msReleaseLock(TLOCK_GEOS);
 #endif
 }
@@ -748,11 +780,13 @@ shapeObj *msGEOSGeometry2Shape(GEOSGeom g) {
 void msGEOSFreeGeometry(shapeObj *shape) {
 #ifdef USE_GEOS
   GEOSGeom g = NULL;
-  GEOSContextHandle_t handle = msGetGeosContextHandle();
+  GEOSContextHandle_t handle;
 
+  /* Most shapes never get a GEOS geometry: return before looking up the handle. */
   if (!shape || !shape->geometry)
     return;
 
+  handle = msGetGeosContextHandle();
   g = (GEOSGeom)shape->geometry;
   GEOSGeom_destroy_r(handle, g);
   shape->geometry = NULL;

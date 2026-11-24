@@ -45,8 +45,71 @@
 
 #include <memory>
 
-#define ACQUIRE_OGR_LOCK msAcquireLock(TLOCK_OGR)
-#define RELEASE_OGR_LOCK msReleaseLock(TLOCK_OGR)
+/*
+** TLOCK_OGR used to be held for every call into OGR, the reading of every
+** feature included, so that the threads of a process read OGR layers
+** (Shapefile through OGR, GeoPackage, MapInfo, DXF ...) one at a time. GDAL is
+** thread safe as long as one dataset is not used by two threads at once, and a
+** dataset is never shared that way here: each layer opens its own, and the
+** connection pool hands a pooled one only to the thread that holds it or to
+** any thread when it is released (msConnPoolRequest()).
+**
+** The lock is therefore only taken to register the drivers, to clean up, and
+** for datasets of drivers built on libraries that are not known to be thread
+** safe: ODA's (DWG, DGNv8) and Esri's FileGDB SDK. Those are recognized by the
+** extension before the open (.dwg, .dgn, .gdb) and by the driver after it. The
+** configuration option or environment variable MS_OGR_THREAD_LOCK=YES takes the
+** lock for every dataset again, as before. It is read once, so that a lock
+** taken is always released.
+*/
+static int msOGRUseThreadLock() {
+  static int use_lock = -1;
+  if (use_lock < 0)
+    use_lock =
+        CPLTestBool(CPLGetConfigOption("MS_OGR_THREAD_LOCK", "NO")) ? 1 : 0;
+  return use_lock;
+}
+
+/* Whether a dataset at this path may be opened by a driver that needs the lock. */
+static int msOGRPathNeedsThreadLock(const char *pszPath) {
+  const char *pszExt;
+  if (msOGRUseThreadLock())
+    return MS_TRUE;
+  if (pszPath == NULL)
+    return MS_FALSE;
+  pszExt = CPLGetExtension(pszPath);
+  return EQUAL(pszExt, "dwg") || EQUAL(pszExt, "dgn") || EQUAL(pszExt, "gdb");
+}
+
+/* Whether the driver of an open dataset needs the lock. */
+static int msOGRDatasetNeedsThreadLock(OGRDataSourceH hDS) {
+  GDALDriverH hDriver;
+  const char *pszDriver;
+  if (msOGRUseThreadLock())
+    return MS_TRUE;
+  if (hDS == NULL)
+    return MS_FALSE;
+  if (msOGRPathNeedsThreadLock(GDALGetDescription((GDALDatasetH)hDS)))
+    return MS_TRUE;
+  hDriver = GDALGetDatasetDriver((GDALDatasetH)hDS);
+  pszDriver = hDriver ? GDALGetDriverShortName(hDriver) : "";
+  return EQUAL(pszDriver, "DWG") || EQUAL(pszDriver, "DGNV8") ||
+         EQUAL(pszDriver, "FileGDB");
+}
+
+#define ACQUIRE_OGR_LOCK_IF(bLock)                                             \
+  do {                                                                         \
+    if (bLock)                                                                 \
+      msAcquireLock(TLOCK_OGR);                                                \
+  } while (0)
+#define RELEASE_OGR_LOCK_IF(bLock)                                             \
+  do {                                                                         \
+    if (bLock)                                                                 \
+      msReleaseLock(TLOCK_OGR);                                                \
+  } while (0)
+/* For a function with an msOGRFileInfo *psInfo. */
+#define ACQUIRE_OGR_LOCK ACQUIRE_OGR_LOCK_IF(psInfo->bThreadLock)
+#define RELEASE_OGR_LOCK RELEASE_OGR_LOCK_IF(psInfo->bThreadLock)
 
 // GDAL 1.x API
 #include "ogr_api.h"
@@ -83,6 +146,8 @@ typedef struct ms_ogr_file_info_t {
   int bPaging;
 
   char *pszWHERE;
+
+  int bThreadLock; /* TLOCK_OGR is held around the calls into OGR */
 
 } msOGRFileInfo;
 
@@ -1061,7 +1126,11 @@ void msOGRInitialize(void)
    * Register OGR Drivers, only once per execution
    * ------------------------------------------------------------------ */
   if (!bOGRDriversRegistered) {
-    ACQUIRE_OGR_LOCK;
+    msAcquireLock(TLOCK_OGR);
+    if (bOGRDriversRegistered) {
+      msReleaseLock(TLOCK_OGR);
+      return;
+    }
 
     OGRRegisterAll();
     CPLPushErrorHandler(CPLQuietErrorHandler);
@@ -1076,7 +1145,7 @@ void msOGRInitialize(void)
 
     bOGRDriversRegistered = MS_TRUE;
 
-    RELEASE_OGR_LOCK;
+    msReleaseLock(TLOCK_OGR);
   }
 }
 
@@ -1154,6 +1223,7 @@ static msOGRFileInfo *msOGRFileOpen(layerObj *layer, const char *connection)
   /*      Can we get an existing connection for this layer?               */
   /* -------------------------------------------------------------------- */
   OGRDataSourceH hDS;
+  int bThreadLock = msOGRPathNeedsThreadLock(pszDSName);
 
   hDS = (OGRDataSourceH)msConnPoolRequest(layer);
 
@@ -1181,14 +1251,15 @@ static msOGRFileInfo *msOGRFileOpen(layerObj *layer, const char *connection)
       msDebug("GDALOpenEx(%s)\n", pszDSSelectedName);
     }
 
-    ACQUIRE_OGR_LOCK;
+    bThreadLock = bThreadLock || msOGRPathNeedsThreadLock(pszDSSelectedName);
+    ACQUIRE_OGR_LOCK_IF(bThreadLock);
     char **connectionoptions =
         msGetStringListFromHashTable(&(layer->connectionoptions));
     hDS = (OGRDataSourceH)GDALOpenEx(pszDSSelectedName, GDAL_OF_VECTOR, NULL,
                                      (const char *const *)connectionoptions,
                                      NULL);
     CSLDestroy(connectionoptions);
-    RELEASE_OGR_LOCK;
+    RELEASE_OGR_LOCK_IF(bThreadLock);
 
     if (hDS == NULL) {
       msSetError(MS_OGRERR,
@@ -1205,6 +1276,7 @@ static msOGRFileInfo *msOGRFileOpen(layerObj *layer, const char *connection)
 
     msConnPoolRegister(layer, hDS, msOGRCloseConnection);
   }
+  bThreadLock = bThreadLock || msOGRDatasetNeedsThreadLock(hDS);
 
   CPLFree(pszDSName);
   pszDSName = NULL;
@@ -1219,7 +1291,7 @@ static msOGRFileInfo *msOGRFileOpen(layerObj *layer, const char *connection)
   int iLayer;
 
   if (EQUALN(pszLayerDef, "SELECT ", 7)) {
-    ACQUIRE_OGR_LOCK;
+    ACQUIRE_OGR_LOCK_IF(bThreadLock);
     hLayer = OGR_DS_ExecuteSQL(hDS, pszLayerDef, NULL, NULL);
     if (hLayer == NULL) {
       msSetError(MS_OGRERR, "ExecuteSQL() failed. Check server logs.",
@@ -1227,12 +1299,12 @@ static msOGRFileInfo *msOGRFileOpen(layerObj *layer, const char *connection)
       if (strlen(CPLGetLastErrorMsg()) == 0)
         msDebug("ExecuteSQL(%s) failed.\n%s\n", pszLayerDef,
                 CPLGetLastErrorMsg());
-      RELEASE_OGR_LOCK;
+      RELEASE_OGR_LOCK_IF(bThreadLock);
       msConnPoolRelease(layer, hDS);
       CPLFree(pszLayerDef);
       return NULL;
     }
-    RELEASE_OGR_LOCK;
+    RELEASE_OGR_LOCK_IF(bThreadLock);
     nLayerIndex = -1;
   }
 
@@ -1272,6 +1344,7 @@ static msOGRFileInfo *msOGRFileOpen(layerObj *layer, const char *connection)
   psInfo->nLayerIndex = nLayerIndex;
   psInfo->hDS = hDS;
   psInfo->hLayer = hLayer;
+  psInfo->bThreadLock = bThreadLock;
 
   psInfo->nTileId = 0;
   msInitProjection(&(psInfo->sTileProj));
@@ -1655,10 +1728,11 @@ static void msOGRCloseConnection(void *conn_handle)
 
 {
   OGRDataSourceH hDS = (OGRDataSourceH)conn_handle;
+  int bThreadLock = msOGRDatasetNeedsThreadLock(hDS);
 
-  ACQUIRE_OGR_LOCK;
+  ACQUIRE_OGR_LOCK_IF(bThreadLock);
   OGR_DS_Destroy(hDS);
-  RELEASE_OGR_LOCK;
+  RELEASE_OGR_LOCK_IF(bThreadLock);
 }
 
 /**********************************************************************
@@ -5136,14 +5210,14 @@ int msOGRUpdateStyleFromString(mapObj *map, layerObj *layer, classObj *c,
 
   int nRetVal = MS_SUCCESS;
 
-  ACQUIRE_OGR_LOCK;
+  ACQUIRE_OGR_LOCK_IF(msOGRUseThreadLock());
 
   OGRStyleMgrH hStyleMgr = OGR_SM_Create(NULL);
   OGR_SM_InitStyleString(hStyleMgr, stylestring);
   nRetVal = msOGRUpdateStyle(hStyleMgr, map, layer, c);
   OGR_SM_Destroy(hStyleMgr);
 
-  RELEASE_OGR_LOCK;
+  RELEASE_OGR_LOCK_IF(msOGRUseThreadLock());
   return nRetVal;
 }
 
@@ -5154,12 +5228,12 @@ int msOGRUpdateStyleFromString(mapObj *map, layerObj *layer, classObj *c,
 void msOGRCleanup(void)
 
 {
-  ACQUIRE_OGR_LOCK;
+  msAcquireLock(TLOCK_OGR);
   if (bOGRDriversRegistered == MS_TRUE) {
     CPLPopErrorHandler();
     bOGRDriversRegistered = MS_FALSE;
   }
-  RELEASE_OGR_LOCK;
+  msReleaseLock(TLOCK_OGR);
 }
 
 /************************************************************************/

@@ -237,8 +237,33 @@ void msReleaseLock(int nLockId)
 
 #include <windows.h>
 
-static int mutexes_initialized = 0;
-static HANDLE mutex_locks[TLOCK_MAX];
+/*
+** The locks are critical sections rather than kernel mutexes: an uncontended
+** lock is taken without a system call and a briefly contended one spins before
+** it waits. They stay recursive, as the mutexes were. The owner and the depth
+** are kept so that a release by a thread that does not hold the lock is
+** ignored, as ReleaseMutex() ignored it, rather than corrupting the section.
+*/
+static volatile LONG mutexes_initialized = 0;
+static CRITICAL_SECTION mutex_locks[TLOCK_MAX];
+static volatile DWORD lock_owners[TLOCK_MAX];
+static int lock_depths[TLOCK_MAX];
+static INIT_ONCE locks_once = INIT_ONCE_STATIC_INIT;
+
+static BOOL CALLBACK msInitLocks(PINIT_ONCE once, PVOID parameter,
+                                 PVOID *context) {
+  int i;
+  (void)once;
+  (void)parameter;
+  (void)context;
+  for (i = 0; i < TLOCK_STATIC_MAX; i++) {
+    InitializeCriticalSectionAndSpinCount(mutex_locks + i, 4000);
+    lock_owners[i] = 0;
+    lock_depths[i] = 0;
+  }
+  InterlockedExchange(&mutexes_initialized, TLOCK_STATIC_MAX);
+  return TRUE;
+}
 
 /************************************************************************/
 /*                            msThreadInit()                            */
@@ -247,24 +272,10 @@ static HANDLE mutex_locks[TLOCK_MAX];
 void msThreadInit()
 
 {
-  /* static pthread_mutex_t core_lock = PTHREAD_MUTEX_INITIALIZER; */
-  static HANDLE core_lock = NULL;
-
-  if (mutexes_initialized >= TLOCK_STATIC_MAX)
-    return;
-
   if (thread_debug)
     fprintf(stderr, "msThreadInit() (win32)\n");
 
-  if (core_lock == NULL)
-    core_lock = CreateMutex(NULL, TRUE, NULL);
-  else
-    WaitForSingleObject(core_lock, INFINITE);
-
-  for (; mutexes_initialized < TLOCK_STATIC_MAX; mutexes_initialized++)
-    mutex_locks[mutexes_initialized] = CreateMutex(NULL, FALSE, NULL);
-
-  ReleaseMutex(core_lock);
+  InitOnceExecuteOnce(&locks_once, msInitLocks, NULL, NULL);
 }
 
 /************************************************************************/
@@ -293,7 +304,9 @@ void msAcquireLock(int nLockId)
     fprintf(stderr, "msAcquireLock(%d/%s) (win32)\n", nLockId,
             lock_names[nLockId]);
 
-  WaitForSingleObject(mutex_locks[nLockId], INFINITE);
+  EnterCriticalSection(mutex_locks + nLockId);
+  lock_owners[nLockId] = GetCurrentThreadId();
+  lock_depths[nLockId]++;
 }
 
 /************************************************************************/
@@ -310,7 +323,13 @@ void msReleaseLock(int nLockId)
     fprintf(stderr, "msReleaseLock(%d/%s) (win32)\n", nLockId,
             lock_names[nLockId]);
 
-  ReleaseMutex(mutex_locks[nLockId]);
+  /* Only the owner may leave; another thread's release is ignored. */
+  if (lock_owners[nLockId] != GetCurrentThreadId())
+    return;
+
+  if (--lock_depths[nLockId] == 0)
+    lock_owners[nLockId] = 0;
+  LeaveCriticalSection(mutex_locks + nLockId);
 }
 
 #endif /* defined(USE_THREAD) && defined(_WIN32) */
